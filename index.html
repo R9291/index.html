@@ -1,0 +1,255 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>N-CLASS EFOOTBALL TOURNAMENT</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <style>
+        body { 
+            background: linear-gradient(rgba(7, 7, 20, 0.5), rgba(61, 25, 93, 0.7)), 
+                        url('https://shared.fastly.steamstatic.com/store_item_assets/steam/apps/1665460/8ab1221163d79fb5cc64ce59cf96fa39f7af0d35/capsule_616x353.jpg');
+            background-size: cover; background-attachment: fixed; background-position: center;
+            color: white; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; min-height: 100vh;
+        }
+        .pl-header { background-color: rgba(61, 25, 93, 0.7); backdrop-filter: blur(16px); border-bottom: 1px solid rgba(255,255,255,0.2); }
+        .active-tab { border-bottom: 4px solid #00ff85; color: #00ff85; }
+        .glass-card { background: rgba(10, 10, 30, 0.6); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.1); }
+        .glow-text { color: #fff; text-shadow: 0 0 10px #00ff85, 0 0 20px #00ff85; letter-spacing: 1px; }
+        .ticker-wrap { background: rgba(0,0,0,0.8); border-bottom: 1px solid #00ff85; overflow: hidden; white-space: nowrap; }
+        .ticker-item { display: inline-block; padding: 10px 40px; font-size: 12px; font-weight: 900; text-transform: uppercase; border-right: 1px solid rgba(255,255,255,0.1); }
+        .countdown-box { background: linear-gradient(45deg, #1a1a2e, #16213e); border: 2px solid #00ff85; box-shadow: 0 0 20px rgba(0, 255, 133, 0.3); }
+        
+        .winner-row { 
+            background: linear-gradient(90deg, rgba(255,215,0,0.1), rgba(255,215,0,0.2), rgba(255,215,0,0.1)) !important; 
+            border-left: 4px solid #ffd700 !important; 
+            animation: shine 3s infinite; 
+        }
+        @keyframes shine { 0%, 100% { opacity: 0.8; } 50% { opacity: 1; } }
+        
+        .champion-badge { background: #ffd700; color: #000; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 900; margin-left: 10px; box-shadow: 0 0 15px rgba(255, 215, 0, 0.5); }
+        .form-dot { width: 22px; height: 22px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 10px; font-weight: 900; }
+        .win { background-color: #00ff85; color: #3d195d; }
+        .loss { background-color: #ff005a; color: white; }
+        .draw { background-color: #76766f; color: white; }
+        .pending-badge { background: rgba(255, 255, 255, 0.1); color: #ccc; border: 1px dashed rgba(255,255,255,0.4); font-size: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useEffect } = React;
+        
+        // Configuration
+        const SB_URL = "https://ivtxkwmoynzyfjsrcomb.supabase.co";
+        const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Iml2dHhrd21veW56eWZqc3Jjb21iIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzQ2NDg4NDksImV4cCI6MjA5MDIyNDg0OX0.zfsWCEwGNGg2OnJMsPyiHgK59pMzMsNsdGTHW6MrlKo";
+        const supabaseClient = supabase.createClient(SB_URL, SB_KEY);
+
+        function App() {
+            const [view, setView] = useState('standings');
+            const [isAdmin, setIsAdmin] = useState(false);
+            const [teams, setTeams] = useState([]);
+            const [matches, setMatches] = useState([]);
+            const [timeLeft, setTimeLeft] = useState(0); 
+            const [timerActive, setTimerActive] = useState(false);
+
+            const fetchData = async () => {
+                const { data: t } = await supabaseClient.from('teams').select('*');
+                const { data: m } = await supabaseClient.from('matches').select('*').order('created_at', { ascending: false });
+                if (t) setTeams(t);
+                if (m) setMatches(m);
+            };
+
+            useEffect(() => { fetchData(); }, []);
+            
+            useEffect(() => {
+                let interval = null;
+                if (timerActive && timeLeft > 0) interval = setInterval(() => setTimeLeft(p => p - 1), 1000);
+                else if (timeLeft === 0) setTimerActive(false);
+                return () => clearInterval(interval);
+            }, [timerActive, timeLeft]);
+
+            const nextMatch = useMemo(() => [...matches].reverse().find(m => m.hScore === null), [matches]);
+            const recentResults = useMemo(() => matches.filter(m => m.hScore !== null).slice(0, 5), [matches]);
+
+            const tableData = useMemo(() => {
+                let stats = teams.map(t => ({ 
+                    id: t.id, name: t.team_name, mp: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, gd: 0, pts: 0, form: [] 
+                }));
+                matches.forEach(m => {
+                    if (m.hScore === null || m.aScore === null) return; 
+                    const h = stats.find(s => s.name === m.home), a = stats.find(s => s.name === m.away);
+                    if(!h || !a) return;
+                    h.mp++; a.mp++; h.gf += m.hScore; h.ga += m.aScore; a.gf += m.aScore; a.ga += m.hScore;
+                    if (m.hScore > m.aScore) { h.w++; a.l++; h.pts += 3; h.form.push('W'); a.form.push('L'); }
+                    else if (m.aScore > m.hScore) { a.w++; h.l++; a.pts += 3; a.form.push('W'); h.form.push('L'); }
+                    else { h.d++; a.d++; h.pts += 1; h.form.push('D'); a.form.push('D'); }
+                    h.gd = h.gf - h.ga; a.gd = a.gf - a.ga;
+                });
+                return stats.sort((a, b) => b.pts - a.pts || b.gd - a.gd);
+            }, [matches, teams]);
+
+            const formatTime = (s) => `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`;
+
+            return (
+                <div>
+                    <div className="ticker-wrap"><div className="flex animate-pulse"><div className="ticker-item text-[#00ff85]">LIVE RESULTS:</div>
+                    {recentResults.map(m => (<div key={m.id} className="ticker-item">{m.home} <span className="text-[#00ff85]">{m.hScore}-{m.aScore}</span> {m.away}</div>))}
+                    </div></div>
+
+                    <div className="max-w-6xl mx-auto mt-6 glass-card rounded-3xl overflow-hidden mb-20 shadow-2xl">
+                        <div className="pl-header p-8">
+                            <div className="flex justify-between items-center mb-6">
+                                <h1 className="text-3xl font-black italic glow-text uppercase">N-CLASS <span className="text-[#00ff85]">EFOOTBALL</span></h1>
+                                <input type="password" placeholder="ADMIN PIN" className="bg-white/10 text-[10px] p-2 rounded w-20 outline-none border border-white/20" onChange={e => e.target.value === "3107" && setIsAdmin(true)} />
+                            </div>
+
+                            <div className="countdown-box mx-auto max-w-sm p-4 rounded-2xl mb-8 text-center">
+                                <p className="text-[10px] font-bold text-[#00ff85] uppercase tracking-widest mb-1">{timerActive ? "MATCH IN PROGRESS" : "NEXT MATCH"}</p>
+                                {nextMatch && <div className="text-xs font-bold mb-1 uppercase tracking-tighter">{nextMatch.home} vs {nextMatch.away}</div>}
+                                <div className="text-4xl font-black font-mono">{formatTime(timeLeft)}</div>
+                            </div>
+
+                            <div className="flex gap-10 text-xs font-bold uppercase tracking-widest cursor-pointer">
+                                <span onClick={() => setView('standings')} className={view === 'standings' ? 'active-tab pb-4' : 'opacity-50 pb-4'}>Standings</span>
+                                <span onClick={() => setView('matches')} className={view === 'matches' ? 'active-tab pb-4' : 'opacity-50 pb-4'}>Matches</span>
+                            </div>
+                        </div>
+
+                        <div className="p-6">
+                            {view === 'standings' && (
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left border-separate border-spacing-y-2 text-sm">
+                                        <thead><tr className="text-gray-400 text-[10px] uppercase font-black">
+                                            <th className="px-4">Pos</th><th>Club</th><th className="text-center">MP</th>
+                                            <th className="text-center">W</th><th className="text-center">D</th><th className="text-center">L</th>
+                                            <th className="text-center">GD</th><th className="text-center text-white">Pts</th><th className="text-center">Last 5</th>
+                                        </tr></thead>
+                                        <tbody>
+                                            {tableData.map((t, i) => (
+                                                <tr key={i} className={`transition ${i === 0 && t.mp > 0 ? 'winner-row' : 'bg-white/5 hover:bg-white/10'}`}>
+                                                    <td className="px-4 py-4 font-black italic text-white/40">{i === 0 && t.mp > 0 ? '🏆' : i + 1}</td>
+                                                    <td className="font-bold">{t.name}{i === 0 && t.mp > 0 && <span className="champion-badge">LEADER</span>}</td>
+                                                    <td className="text-center">{t.mp}</td><td className="text-center">{t.w}</td><td className="text-center">{t.d}</td><td className="text-center">{t.l}</td>
+                                                    <td className="text-center font-mono">{t.gd > 0 ? `+${t.gd}` : t.gd}</td>
+                                                    <td className="text-center font-black text-[#00ff85] text-xl">{t.pts}</td>
+                                                    <td><div className="flex justify-center gap-1">{t.form.slice(-5).map((r, idx) => <div key={idx} className={`form-dot ${r==='W'?'win':r==='L'?'loss':'draw'}`}>{r}</div>)}</div></td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            )}
+
+                            {view === 'matches' && (
+                                <div className="grid gap-4 py-4 min-h-[300px]">
+                                    {matches.map(m => (
+                                        <div key={m.id} className="group flex justify-between items-center bg-black/40 p-6 rounded-2xl border border-white/10 hover:border-[#00ff85]/50 transition">
+                                            <div className="flex-1 text-right font-black uppercase text-lg">{m.home}</div>
+                                            <div className={`mx-8 px-8 py-2 rounded-lg font-black shadow-2xl transition-all ${isAdmin ? 'cursor-pointer hover:bg-[#00ff85] hover:text-black' : ''} ${m.hScore !== null ? 'bg-[#3d195d] text-[#00ff85] border border-[#00ff85]' : 'pending-badge'}`} 
+                                                 onClick={async () => {
+                                                     if(!isAdmin) return;
+                                                     const hs = prompt(`Score for ${m.home}:`), as = prompt(`Score for ${m.away}:`);
+                                                     if(hs !== null && as !== null) {
+                                                         await supabaseClient.from('matches').update({ hScore: parseInt(hs), aScore: parseInt(as) }).eq('id', m.id);
+                                                         fetchData();
+                                                     }
+                                                 }}>
+                                                {m.hScore !== null ? `${m.hScore} - ${m.aScore}` : "SCHEDULED"}
+                                            </div>
+                                            <div className="flex-1 text-left font-black uppercase text-lg">{m.away}</div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </div>
+
+                        {isAdmin && (
+                            <div className="bg-[#00ff85]/10 p-8 border-t border-[#00ff85]/40 grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+                                
+                                {/* Timer */}
+                                <form onSubmit={e => { e.preventDefault(); setTimeLeft(parseInt(new FormData(e.target).get('mins')) * 60); setTimerActive(true); }} className="space-y-2">
+                                    <p className="text-[10px] font-bold uppercase text-[#00ff85]">Manual Timer</p>
+                                    <input name="mins" type="number" placeholder="Minutes" className="w-full bg-black/60 p-2 rounded text-white text-xs" required />
+                                    <button className="w-full bg-yellow-500 text-black font-black py-2 rounded text-[10px] uppercase">Start Clock</button>
+                                </form>
+
+                                {/* New Team */}
+                                <form onSubmit={async e => { 
+                                    e.preventDefault(); 
+                                    await supabaseClient.from('teams').insert([{ team_name: new FormData(e.target).get('t') }]); 
+                                    fetchData(); 
+                                    e.target.reset(); 
+                                }} className="space-y-2">
+                                    <p className="text-[10px] font-bold uppercase text-[#00ff85]">Add New Club</p>
+                                    <input name="t" placeholder="Team Name" className="w-full bg-black/60 p-2 rounded text-white text-xs" required />
+                                    <button className="w-full bg-[#00ff85] text-black font-black py-2 rounded text-[10px] uppercase">Register</button>
+                                </form>
+
+                                {/* New Match */}
+                                <form onSubmit={async e => { 
+                                    e.preventDefault(); 
+                                    const d = new FormData(e.target); 
+                                    await supabaseClient.from('matches').insert([{ home: d.get('h'), away: d.get('a'), hScore: null, aScore: null }]); 
+                                    fetchData(); 
+                                }} className="space-y-2">
+                                    <p className="text-[10px] font-bold uppercase text-[#00ff85]">Schedule Match</p>
+                                    <div className="flex gap-1">
+                                        <select name="h" className="flex-1 bg-black/60 p-1 rounded text-[10px]">{teams.map(t => <option key={t.id} value={t.team_name}>{t.team_name}</option>)}</select>
+                                        <select name="a" className="flex-1 bg-black/60 p-1 rounded text-[10px]">{teams.map(t => <option key={t.id} value={t.team_name}>{t.team_name}</option>)}</select>
+                                    </div>
+                                    <button className="w-full bg-blue-600 font-black py-2 rounded text-[10px] uppercase">Add Fixture</button>
+                                </form>
+
+                                {/* Danger Zone */}
+                                <div className="space-y-2 border-l border-white/10 pl-4">
+                                    <p className="text-[10px] font-bold uppercase text-red-500">Danger Zone</p>
+                                    
+                                    <div className="flex gap-1">
+                                        <select id="delT" className="flex-1 bg-black/60 p-1 rounded text-[10px]">
+                                            <option value="">Select Team to Remove</option>
+                                            {teams.map(t => <option key={t.id} value={t.id}>{t.team_name}</option>)}
+                                        </select>
+                                        <button onClick={async () => {
+                                            const id = document.getElementById('delT').value;
+                                            if(id && confirm("Delete this team?")) {
+                                                await supabaseClient.from('teams').delete().eq('id', id);
+                                                fetchData();
+                                            }
+                                        }} className="bg-red-600 px-2 rounded text-[10px] font-bold">DEL</button>
+                                    </div>
+
+                                    <button onClick={async () => {
+                                        if(confirm("Clear all match results? Teams will stay.")) {
+                                            await supabaseClient.from('matches').delete().neq('id', 0);
+                                            fetchData();
+                                        }
+                                    }} className="w-full border border-orange-500 text-orange-500 hover:bg-orange-500 hover:text-white text-[9px] py-1 rounded uppercase font-bold">
+                                        Clear Matches Only
+                                    </button>
+
+                                    <button onClick={async () => {
+                                        if(confirm("⚠️ RESET LEAGUE? This deletes EVERYTHING!")) {
+                                            await supabaseClient.from('matches').delete().neq('id', 0);
+                                            await supabaseClient.from('teams').delete().neq('id', 0);
+                                            fetchData();
+                                        }
+                                    }} className="w-full border border-red-500 text-red-500 hover:bg-red-500 hover:text-white text-[9px] py-1 rounded uppercase font-bold">
+                                        Reset Full League
+                                    </button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                </div>
+            );
+        }
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
